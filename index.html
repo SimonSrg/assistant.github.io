@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PDF转图片工具 - 可独立拖动分割线</title>
+    <title>PDF转图片工具 - 移动端优化版</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
     <style>
         * {
@@ -94,6 +94,8 @@
             font-weight: 600;
             margin: 10px 5px;
             display: inline-block;
+            -webkit-tap-highlight-color: transparent;
+            user-select: none;
         }
         
         .btn:hover {
@@ -187,6 +189,7 @@
             background: #f8f9fa;
             text-align: center;
             position: relative;
+            touch-action: manipulation;
         }
         
         .converted-image {
@@ -194,6 +197,10 @@
             max-height: 400px;
             border-radius: 5px;
             box-shadow: 0 3px 10px rgba(0, 0, 0, 0.1);
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
         }
         
         .split-indicator {
@@ -206,6 +213,7 @@
             transform: translateX(-50%);
             cursor: col-resize;
             transition: left 0.1s;
+            touch-action: none;
         }
         
         .split-indicator::before {
@@ -301,6 +309,16 @@
             font-size: 0.9rem;
         }
         
+        .mobile-download-hint {
+            display: none;
+            text-align: center;
+            margin: 10px 0;
+            padding: 10px;
+            background: #e3f2fd;
+            border-radius: 5px;
+            color: #1565c0;
+        }
+        
         footer {
             text-align: center;
             padding: 20px;
@@ -339,13 +357,54 @@
             .split-image {
                 max-width: 100%;
             }
+            
+            .mobile-download-hint {
+                display: block;
+            }
+            
+            .btn {
+                padding: 15px 25px;
+                font-size: 1.1rem;
+            }
+        }
+        
+        @media (max-width: 480px) {
+            body {
+                padding: 10px;
+            }
+            
+            header {
+                padding: 20px;
+            }
+            
+            h1 {
+                font-size: 1.8rem;
+            }
+            
+            .main-content {
+                padding: 15px;
+            }
+            
+            .upload-section {
+                padding: 15px;
+            }
+            
+            .upload-area {
+                padding: 20px;
+            }
+            
+            .option-group {
+                flex-direction: column;
+                gap: 10px;
+                width: 100%;
+            }
         }
     </style>
 </head>
 <body>
     <div class="container">
         <header>
-            <h1>PDF转图片工具 - 可独立拖动分割线</h1>
+            <h1>PDF转图片工具 - 移动端优化版</h1>
             <p class="subtitle">将PDF转换为图片并独立调整每张图片的切割位置</p>
         </header>
         
@@ -387,6 +446,10 @@
                 <p>提示: 每张图片的分割线可以独立拖动调整位置，默认位于图片中间</p>
             </div>
             
+            <div class="mobile-download-hint">
+                <p>💡 移动端提示: 长按图片可选择"保存图像"或使用下载按钮</p>
+            </div>
+            
             <div class="controls">
                 <button class="btn" id="convertBtn" disabled>开始转换</button>
                 <button class="btn" id="splitAllBtn" disabled>切割全部图片</button>
@@ -419,7 +482,7 @@
     </div>
     
     <footer>
-        <p>© 2023 PDF转图片工具 - 可独立拖动分割线 | 使用PDF.js构建 | 完全在浏览器中处理</p>
+        <p>© 2023 PDF转图片工具 - 移动端优化版 | 使用PDF.js构建 | 完全在浏览器中处理</p>
     </footer>
 
     <script>
@@ -454,6 +517,9 @@
         let convertedImages = [];
         let splitImages = [];
         let currentSplitIndex = 0;
+        
+        // 检测是否为移动设备
+        const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
         
         // 事件监听器
         selectFileBtn.addEventListener('click', () => pdfFileInput.click());
@@ -685,8 +751,14 @@
             let startX = 0;
             let startLeft = 0;
             
+            // 鼠标事件
             indicator.addEventListener('mousedown', startDrag);
-            indicator.addEventListener('touchstart', startDrag);
+            
+            // 触摸事件（移动设备）
+            indicator.addEventListener('touchstart', function(e) {
+                e.preventDefault();
+                startDrag(e);
+            });
             
             function startDrag(e) {
                 e.preventDefault();
@@ -702,6 +774,7 @@
                 const currentLeft = parseInt(indicator.style.left) || 50;
                 startLeft = currentLeft;
                 
+                // 添加事件监听器
                 document.addEventListener('mousemove', drag);
                 document.addEventListener('touchmove', drag);
                 document.addEventListener('mouseup', stopDrag);
@@ -747,6 +820,7 @@
                 isDragging = false;
                 indicator.style.cursor = 'col-resize';
                 
+                // 移除事件监听器
                 document.removeEventListener('mousemove', drag);
                 document.removeEventListener('touchmove', drag);
                 document.removeEventListener('mouseup', stopDrag);
@@ -893,10 +967,21 @@
             const image = convertedImages.find(img => img.pageNum == pageNum);
             if (!image) return;
             
-            const link = document.createElement('a');
-            link.download = `PDF页面_${pageNum}.${image.format}`;
-            link.href = image.dataUrl;
-            link.click();
+            // 移动设备特殊处理
+            if (isMobileDevice) {
+                // 在移动设备上，我们打开图片在新窗口或提供保存提示
+                const newWindow = window.open();
+                newWindow.document.write(`<img src="${image.dataUrl}" style="max-width:100%;">`);
+                newWindow.document.title = `PDF页面_${pageNum}`;
+                showStatus('图片已在新窗口打开，请长按图片选择"保存图像"', 'success');
+            } else {
+                // 桌面设备使用标准下载方式
+                const link = document.createElement('a');
+                link.download = `PDF页面_${pageNum}.${image.format}`;
+                link.href = image.dataUrl;
+                link.click();
+                showStatus(`图片下载开始: PDF页面_${pageNum}.${image.format}`, 'success');
+            }
         }
         
         // 下载切割图片
@@ -905,20 +990,41 @@
             if (!split) return;
             
             const imageData = side === 'left' ? split.left : split.right;
-            const link = document.createElement('a');
-            link.download = `PDF页面_${pageNum}_${side}.${imageFormatSelect.value}`;
-            link.href = imageData.dataUrl;
-            link.click();
+            
+            // 移动设备特殊处理
+            if (isMobileDevice) {
+                const newWindow = window.open();
+                newWindow.document.write(`<img src="${imageData.dataUrl}" style="max-width:100%;">`);
+                newWindow.document.title = `PDF页面_${pageNum}_${side}`;
+                showStatus('图片已在新窗口打开，请长按图片选择"保存图像"', 'success');
+            } else {
+                const link = document.createElement('a');
+                link.download = `PDF页面_${pageNum}_${side}.${imageFormatSelect.value}`;
+                link.href = imageData.dataUrl;
+                link.click();
+                showStatus(`图片下载开始: PDF页面_${pageNum}_${side}.${imageFormatSelect.value}`, 'success');
+            }
         }
         
         // 下载所有图片
         function downloadAllImages() {
-            convertedImages.forEach(image => {
-                const link = document.createElement('a');
-                link.download = `PDF页面_${image.pageNum}.${image.format}`;
-                link.href = image.dataUrl;
-                link.click();
-            });
+            if (isMobileDevice) {
+                showStatus('移动设备上批量下载可能受限，建议逐张下载', 'processing');
+                // 延迟执行，让用户看到提示
+                setTimeout(() => {
+                    convertedImages.forEach(image => {
+                        downloadSingleImage(image.pageNum);
+                    });
+                }, 1000);
+            } else {
+                convertedImages.forEach(image => {
+                    const link = document.createElement('a');
+                    link.download = `PDF页面_${image.pageNum}.${image.format}`;
+                    link.href = image.dataUrl;
+                    link.click();
+                });
+                showStatus('批量下载开始，请查看浏览器下载列表', 'success');
+            }
         }
         
         // 下载所有切割图片
@@ -928,19 +1034,40 @@
                 return;
             }
             
-            splitImages.forEach(split => {
-                // 下载左半部分
-                const leftLink = document.createElement('a');
-                leftLink.download = `PDF页面_${split.originalPage}_左.${imageFormatSelect.value}`;
-                leftLink.href = split.left.dataUrl;
-                leftLink.click();
-                
-                // 下载右半部分
-                const rightLink = document.createElement('a');
-                rightLink.download = `PDF页面_${split.originalPage}_右.${imageFormatSelect.value}`;
-                rightLink.href = split.right.dataUrl;
-                rightLink.click();
-            });
+            if (isMobileDevice) {
+                showStatus('移动设备上批量下载可能受限，建议逐张下载', 'processing');
+                // 延迟执行，让用户看到提示
+                setTimeout(() => {
+                    splitImages.forEach(split => {
+                        // 下载左半部分
+                        const leftLink = document.createElement('a');
+                        leftLink.download = `PDF页面_${split.originalPage}_左.${imageFormatSelect.value}`;
+                        leftLink.href = split.left.dataUrl;
+                        leftLink.click();
+                        
+                        // 下载右半部分
+                        const rightLink = document.createElement('a');
+                        rightLink.download = `PDF页面_${split.originalPage}_右.${imageFormatSelect.value}`;
+                        rightLink.href = split.right.dataUrl;
+                        rightLink.click();
+                    });
+                }, 1000);
+            } else {
+                splitImages.forEach(split => {
+                    // 下载左半部分
+                    const leftLink = document.createElement('a');
+                    leftLink.download = `PDF页面_${split.originalPage}_左.${imageFormatSelect.value}`;
+                    leftLink.href = split.left.dataUrl;
+                    leftLink.click();
+                    
+                    // 下载右半部分
+                    const rightLink = document.createElement('a');
+                    rightLink.download = `PDF页面_${split.originalPage}_右.${imageFormatSelect.value}`;
+                    rightLink.href = split.right.dataUrl;
+                    rightLink.click();
+                });
+                showStatus('批量下载开始，请查看浏览器下载列表', 'success');
+            }
         }
         
         // 打包下载为ZIP（简化版，实际实现需要JSZip库）
