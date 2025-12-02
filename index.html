@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PDF转图片工具 - 移动端优化版</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -431,14 +432,14 @@
                 
                 <div class="option-group">
                     <label for="imageQuality">图片质量:</label>
-                    <input type="range" id="imageQuality" min="0.1" max="1" step="0.1" value="0.9">
-                    <span id="qualityValue">90%</span>
+                    <input type="range" id="imageQuality" min="0.1" max="1" step="0.1" value="1">
+                    <span id="qualityValue">100%</span>
                 </div>
                 
                 <div class="option-group">
                     <label for="scale">缩放比例:</label>
-                    <input type="range" id="scale" min="0.5" max="3" step="0.1" value="1.5">
-                    <span id="scaleValue">150%</span>
+                    <input type="range" id="scale" min="0.5" max="3" step="0.1" value="3">
+                    <span id="scaleValue">300%</span>
                 </div>
             </div>
             
@@ -452,11 +453,8 @@
             
             <div class="controls">
                 <button class="btn" id="convertBtn" disabled>开始转换</button>
-                <button class="btn" id="splitAllBtn" disabled>切割全部图片</button>
                 <button class="btn" id="resetBtn" disabled>重置</button>
             </div>
-            
-            <div class="status" id="statusMessage"></div>
             
             <div class="preview-container" id="previewContainer">
                 <h2 class="preview-title">转换结果</h2>
@@ -471,13 +469,20 @@
                 <div class="split-preview" id="splitPreview">
                     <!-- 左右切割预览将在这里显示 -->
                 </div>
+
+                <div class="controls">
+                    <button class="btn" id="splitAllBtn" disabled>切割全部图片</button>
+                </div>
                 
                 <div class="download-options">
                     <button class="btn" id="downloadAllBtn">下载全部图片</button>
                     <button class="btn" id="downloadSplitAllBtn">下载全部切割图片</button>
                     <button class="btn" id="downloadZipBtn">打包下载(ZIP)</button>
+                    <button class="btn btn-secondary" id="mergePdfBtn" disabled>合并为PDF并下载</button>
                 </div>
             </div>
+
+            <div class="status" id="statusMessage"></div>
         </div>
     </div>
     
@@ -512,6 +517,7 @@
         const nextSplitBtn = document.getElementById('nextSplitBtn');
         const currentSplitSpan = document.getElementById('currentSplit');
         const totalSplitsSpan = document.getElementById('totalSplits');
+        const mergePdfBtn = document.getElementById('mergePdfBtn');
         
         let currentPdf = null;
         let convertedImages = [];
@@ -534,6 +540,7 @@
         downloadZipBtn.addEventListener('click', downloadAsZip);
         prevSplitBtn.addEventListener('click', showPrevSplit);
         nextSplitBtn.addEventListener('click', showNextSplit);
+        mergePdfBtn.addEventListener('click', mergeImagesToPdf);
         
         // 拖放功能
         uploadArea.addEventListener('dragover', (e) => {
@@ -667,22 +674,25 @@
                     };
                     
                     page.render(renderContext).promise.then(() => {
-                        // 将Canvas转换为图片
-                        const imageDataUrl = canvas.toDataURL(`image/${format}`, quality);
                         
-                        // 保存图片数据
+                        const trimmedCanvas = trimCanvas(canvas);
+                        
+                        // 使用裁切后的 Canvas 转换为图片
+                        const imageDataUrl = trimmedCanvas.toDataURL(`image/${format}`, quality);
+
+                        // 保存图片数据，使用裁切后的尺寸
                         convertedImages.push({
                             dataUrl: imageDataUrl,
                             pageNum: pageNum,
-                            width: canvas.width,
-                            height: canvas.height,
+                            width: trimmedCanvas.width, // <-- 使用裁切后的宽度
+                            height: trimmedCanvas.height, // <-- 使用裁切后的高度
                             format: format,
-                            canvas: canvas,
-                            splitPosition: 0.5 // 默认分割位置为中间
+                            canvas: trimmedCanvas, // <-- 存储裁切后的 Canvas
+                            splitPosition: 0.5 
                         });
-                        
+
                         // 显示图片
-                        displayImage(imageDataUrl, pageNum, canvas.width, canvas.height);
+                        displayImage(imageDataUrl, pageNum, trimmedCanvas.width, trimmedCanvas.height);
                         
                         // 转换下一页
                         convertPage(pageNum + 1);
@@ -901,6 +911,7 @@
             
             // 显示第一张切割图片
             if (splitImages.length > 0) {
+                mergePdfBtn.disabled = false;
                 currentSplitIndex = 0;
                 updateSplitPreview(currentSplitIndex);
                 totalSplitsSpan.textContent = splitImages.length;
@@ -1081,6 +1092,173 @@
             }, 1500);
         }
         
+        /**
+         * 自动识别 Canvas 四周的空白像素并裁切，返回一个新的 Canvas
+         * @param {HTMLCanvasElement} canvas 原始 Canvas
+         * @returns {HTMLCanvasElement} 裁切后的 Canvas
+         */
+        function trimCanvas(canvas) {
+            const ctx = canvas.getContext('2d');
+            const width = canvas.width;
+            const height = canvas.height;
+            
+            // 获取所有像素数据
+            const imageData = ctx.getImageData(0, 0, width, height);
+            const data = imageData.data;
+            
+            let top = height, bottom = 0, left = width, right = 0;
+            
+            // 寻找内容边界
+            for (let y = 0; y < height; y++) {
+                for (let x = 0; x < width; x++) {
+                    // 获取像素在 data 数组中的起始索引 (RGBA, 4个值)
+                    const i = (y * width + x) * 4;
+                    
+                    // 检查 Alpha (透明度) 通道 (data[i+3]) 或 RGB 值
+                    // 如果 Alpha > 0 (非透明)，且 RGB 值不接近白色 (例如 R, G, B 中至少一个小于 250)
+                    // 裁切的容忍度设置可以根据需要调整。这里使用一个简单的非纯白/非透明检查。
+                    
+                    // 检查：如果像素是非完全透明 AND 包含非白色内容
+                    if (data[i + 3] > 0 && (data[i] < 250 || data[i+1] < 250 || data[i+2] < 250)) {
+                        
+                        // 更新边界
+                        if (x < left) left = x;
+                        if (x > right) right = x;
+                        if (y < top) top = y;
+                        if (y > bottom) bottom = y;
+                    }
+                }
+            }
+            
+            // 如果没有找到非空白内容 (例如PDF是纯白页)，则返回原始 Canvas 或空 Canvas
+            if (top > bottom || left > right) {
+                // 如果是纯白页，返回一个极小的 Canvas
+                const emptyCanvas = document.createElement('canvas');
+                emptyCanvas.width = 1;
+                emptyCanvas.height = 1;
+                return emptyCanvas;
+            }
+            
+            // 增加一点点安全边距，防止内容被切掉
+            const padding = 2; 
+            top = Math.max(0, top - padding);
+            bottom = Math.min(height - 1, bottom + padding);
+            left = Math.max(0, left - padding);
+            right = Math.min(width - 1, right + padding);
+            
+            // 创建新的裁切 Canvas
+            const trimmedWidth = right - left + 1;
+            const trimmedHeight = bottom - top + 1;
+            
+            const trimmedCanvas = document.createElement('canvas');
+            trimmedCanvas.width = trimmedWidth;
+            trimmedCanvas.height = trimmedHeight;
+            
+            // 将原始 Canvas 的裁切区域绘制到新 Canvas 上
+            trimmedCanvas.getContext('2d').drawImage(
+                canvas, 
+                left, top, trimmedWidth, trimmedHeight, // 源矩形 (裁剪区域)
+                0, 0, trimmedWidth, trimmedHeight      // 目标矩形 (新 Canvas 的全部区域)
+            );
+            
+            return trimmedCanvas;
+        }
+
+        // 合并图片为PDF文件
+        // 合并图片为PDF文件 (修正版 - 消除大留白)
+        async function mergeImagesToPdf() {
+            if (splitImages.length === 0) {
+                showStatus('没有切割后的图片可用于合并', 'error');
+                return;
+            }
+
+            const { jsPDF } = window.jspdf;
+            
+            showStatus(`正在合并 ${splitImages.length * 2} 张图片到PDF...`, 'processing');
+            
+            // 创建 jsPDF 实例 (使用 A4)
+            const doc = new jsPDF({
+                orientation: 'p',
+                unit: 'mm',
+                format: 'a4' 
+            });
+
+            let isFirstPage = true; 
+            let filename = `Split_Merge_${new Date().getTime()}.pdf`;
+            
+            // 定义一个固定的微小边距（例如 5mm）
+            const margin = 0; 
+            const a4Width = doc.internal.pageSize.getWidth();
+            const a4Height = doc.internal.pageSize.getHeight();
+            
+            // 计算页面的实际可用空间
+            const effectiveWidth = a4Width - 2 * margin; 
+            const effectiveHeight = a4Height - 2 * margin; 
+
+            for (let i = 0; i < splitImages.length; i++) {
+                const split = splitImages[i];
+                
+                // 处理左右两张图片
+                const imagesToProcess = [split.left, split.right]; // 直接使用 split.left 和 split.right 对象
+
+                for (const imgData of imagesToProcess) {
+                    
+                    // 将 DataURL 转换为 Image 对象
+                    const img = new Image();
+                    img.src = imgData.dataUrl;
+
+                    // 等待图片加载，确保能获取到尺寸
+                    await new Promise(resolve => img.onload = resolve);
+                    
+                    const imgWidth = img.width;
+                    const imgHeight = img.height;
+                    
+                    // --- 核心缩放逻辑修正 ---
+                    
+                    // 1. 计算基于宽度和高度的各自缩放比例
+                    const scaleW = effectiveWidth / imgWidth;
+                    const scaleH = effectiveHeight / imgHeight;
+                    
+                    // 2. 选择较小的缩放比例，确保图片完整地放入页面内 (Aspect Fit)
+                    const finalScale = Math.min(scaleW, scaleH);
+                    
+                    // 3. 计算最终尺寸
+                    const targetWidth = imgWidth * finalScale;
+                    const targetHeight = imgHeight * finalScale;
+                    
+                    // 4. 计算居中位置，保证四周边距相等
+                    const x = (a4Width - targetWidth) / 2;
+                    const y = (a4Height - targetHeight) / 2;
+
+                    // --- PDF 页面操作 ---
+                    
+                    if (!isFirstPage) {
+                        doc.addPage();
+                    } else {
+                        isFirstPage = false;
+                    }
+
+                    const imageType = imgData.dataUrl.split(';')[0].split('/')[1];
+                    
+                    // 添加图片
+                    doc.addImage(
+                        imgData.dataUrl, 
+                        imageType.toUpperCase(), 
+                        x, 
+                        y, 
+                        targetWidth, 
+                        targetHeight, 
+                        null, 
+                        'FAST'
+                    );
+                }
+            }
+
+            // 保存PDF文件
+            doc.save(filename);
+            showStatus(`PDF合并完成！文件名为: ${filename}`, 'success');
+        }
+
         // 重置转换器
         function resetConverter() {
             pdfFileInput.value = '';
