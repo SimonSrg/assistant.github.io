@@ -412,11 +412,11 @@
         <div class="main-content">
             <div class="upload-section" id="uploadSection">
                 <div class="upload-area" id="uploadArea">
-                    <div class="upload-icon">📄</div>
-                    <h3>选择或拖放PDF文件</h3>
-                    <p>支持最大50MB的PDF文件</p>
-                    <input type="file" id="pdfFile" class="file-input" accept=".pdf">
-                    <button class="btn" id="selectFileBtn">选择PDF文件</button>
+                    <div class="upload-icon">📄/🖼️</div>
+                    <h3>选择 PDF 文件 或 多张图片</h3>
+                    <p>支持 PDF、JPG、PNG、WebP (可批量选择)</p>
+                    <input type="file" id="fileInput" class="file-input" accept=".pdf, image/png, image/jpeg, image/jpg, image/webp" multiple>
+                    <button class="btn" id="selectFileBtn">选择文件</button>
                 </div>
             </div>
             
@@ -513,7 +513,7 @@
         pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
         
         // DOM元素
-        const pdfFileInput = document.getElementById('pdfFile');
+        const fileInput = document.getElementById('fileInput');
         const selectFileBtn = document.getElementById('selectFileBtn');
         const convertBtn = document.getElementById('convertBtn');
         const splitAllBtn = document.getElementById('splitAllBtn');
@@ -547,14 +547,17 @@
         let convertedImages = [];
         let splitImages = [];
         let currentSplitIndex = 0;
-        
+        let selectedFiles = []; // 存储用户选择的文件列表
+        let processMode = 'pdf';
+
         // 检测是否为移动设备
         const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
         
         // 事件监听器
-        selectFileBtn.addEventListener('click', () => pdfFileInput.click());
-        pdfFileInput.addEventListener('change', handleFileSelect);
-        convertBtn.addEventListener('click', convertPdfToImages);
+        selectFileBtn.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', handleFileSelect);
+        // convertBtn.addEventListener('click', convertPdfToImages);
+        convertBtn.addEventListener('click', startProcessing);
         splitAllBtn.addEventListener('click', splitAllImages);
         resetBtn.addEventListener('click', resetConverter);
         imageQualitySlider.addEventListener('input', updateQualityValue);
@@ -602,44 +605,169 @@
         function updateScaleValue() {
             scaleValue.textContent = Math.round(scaleSlider.value * 100) + '%';
         }
+
+        function startProcessing() {
+            if (processMode === 'pdf') {
+                convertPdfToImages(); // 调用原有的 PDF 处理逻辑
+            } else {
+                processImages(); // 调用新的图片批处理逻辑
+            }
+        }
+
+        // 新增 processImages 函数
+        function processImages() {
+            if (selectedFiles.length === 0) {
+                showStatus('请先选择图片', 'error');
+                return;
+            }
+
+            showStatus('正在处理图片 (缩放、增强、裁切)...', 'processing');
+            
+            // 重置数据
+            convertedImages = [];
+            splitImages = [];
+            imagesContainer.innerHTML = '';
+            splitPreview.innerHTML = '';
+            currentSplitIndex = 0;
+            totalSplitsSpan.textContent = '0';
+
+            const format = imageFormatSelect.value;
+            const quality = parseFloat(imageQualitySlider.value);
+            const scale = parseFloat(scaleSlider.value); // 这里 scale 作为图片缩放倍率
+            
+            // 获取增强参数
+            const sAmount = parseFloat(sharpenSlider.value) || 0;
+            const dAmount = parseFloat(darkenSlider.value) || 0;
+            const cThreshold = parseFloat(cleanSlider.value);
+
+            let processedCount = 0;
+
+            // 递归处理函数 (为了按顺序处理并更新UI)
+            const processNext = (index) => {
+                if (index >= selectedFiles.length) {
+                    showStatus(`处理完成！共 ${convertedImages.length} 张图片`, 'success');
+                    previewContainer.style.display = 'block';
+                    splitAllBtn.disabled = false;
+                    return;
+                }
+
+                const file = selectedFiles[index];
+                const reader = new FileReader();
+
+                reader.onload = (e) => {
+                    const img = new Image();
+                    img.onload = () => {
+                        // 1. 创建 Canvas 并应用缩放
+                        const canvas = document.createElement('canvas');
+                        const ctx = canvas.getContext('2d');
+                        
+                        // 应用缩放比例
+                        const targetWidth = img.width * scale;
+                        const targetHeight = img.height * scale;
+                        
+                        canvas.width = targetWidth;
+                        canvas.height = targetHeight;
+                        
+                        // 绘制原始图片
+                        ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
+
+                        // 2. 自动裁切空白 (复用现有函数)
+                        const trimmedCanvas = trimCanvas(canvas);
+                        
+                        // 3. 应用图像增强 (复用现有函数：锐化、加深、净化)
+                        const tCtx = trimmedCanvas.getContext('2d');
+                        applyImageEnhancement(
+                            tCtx, 
+                            trimmedCanvas.width, 
+                            trimmedCanvas.height, 
+                            sAmount, 
+                            dAmount, 
+                            cThreshold
+                        );
+
+                        // 4. 生成最终图片数据
+                        const imageDataUrl = trimmedCanvas.toDataURL(`image/${format}`, quality);
+
+                        // 5. 存入结果数组 (保持与 PDF 模式一样的数据结构)
+                        // 注意：pageNum 这里用 index + 1 代替
+                        convertedImages.push({
+                            dataUrl: imageDataUrl,
+                            pageNum: index + 1, 
+                            width: trimmedCanvas.width,
+                            height: trimmedCanvas.height,
+                            format: format,
+                            canvas: trimmedCanvas,
+                            splitPosition: 0.5 
+                        });
+
+                        // 6. 显示结果
+                        displayImage(imageDataUrl, index + 1, trimmedCanvas.width, trimmedCanvas.height);
+
+                        // 处理下一张
+                        processNext(index + 1);
+                    };
+                    img.src = e.target.result;
+                };
+                reader.readAsDataURL(file);
+            };
+
+            // 开始处理第一张
+            processNext(0);
+        }
         
         // 处理文件选择
+        // 修改 handleFileSelect 函数
         function handleFileSelect() {
-            if (pdfFileInput.files.length === 0) return;
+            if (fileInput.files.length === 0) return;
             
-            const file = pdfFileInput.files[0];
-            if (file.type !== 'application/pdf') {
-                showStatus('请选择有效的PDF文件', 'error');
+            // 将 FileList 转换为数组
+            selectedFiles = Array.from(fileInput.files);
+            const firstFile = selectedFiles[0];
+            
+            // 判断模式
+            if (firstFile.type === 'application/pdf') {
+                processMode = 'pdf';
+                // 如果是 PDF，为了逻辑简单，我们只取第一个 PDF (PDF.js 处理单个文件较好)
+                if (selectedFiles.length > 1) {
+                    showStatus('检测到 PDF，将仅处理第一个文件', 'processing');
+                    selectedFiles = [firstFile];
+                }
+            } else if (firstFile.type.startsWith('image/')) {
+                processMode = 'image';
+                // 过滤掉非图片文件
+                selectedFiles = selectedFiles.filter(f => f.type.startsWith('image/'));
+            } else {
+                showStatus('不支持的文件格式', 'error');
                 return;
             }
-            
-            if (file.size > 50 * 1024 * 1024) {
-                showStatus('文件大小不能超过50MB', 'error');
-                return;
+
+            // 更新 UI 显示
+            let infoText = '';
+            if (processMode === 'pdf') {
+                infoText = `${firstFile.name} (${(firstFile.size / 1024 / 1024).toFixed(2)} MB)`;
+                // 如果是 PDF，预加载 PDF 对象 (保持原有逻辑)
+                const fileReader = new FileReader();
+                fileReader.onload = function() {
+                    loadPdf(new Uint8Array(this.result));
+                };
+                fileReader.readAsArrayBuffer(firstFile);
+            } else {
+                infoText = `已选择 ${selectedFiles.length} 张图片`;
+                // 图片模式不需要预加载 PDF，直接启用按钮
+                showStatus(`已准备好处理 ${selectedFiles.length} 张图片`, 'success');
+                convertBtn.disabled = false;
+                resetBtn.disabled = false;
             }
-            
-            // 显示文件名
+
             uploadArea.innerHTML = `
                 <div class="upload-icon">✅</div>
                 <h3>已选择文件</h3>
-                <p>${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)</p>
+                <p>${infoText}</p>
                 <button class="btn" id="selectFileBtn">重新选择</button>
             `;
             
-            // 重新绑定事件
-            document.getElementById('selectFileBtn').addEventListener('click', () => pdfFileInput.click());
-            
-            // 启用转换按钮
-            convertBtn.disabled = false;
-            resetBtn.disabled = false;
-            
-            // 读取PDF文件
-            const fileReader = new FileReader();
-            fileReader.onload = function() {
-                const typedArray = new Uint8Array(this.result);
-                loadPdf(typedArray);
-            };
-            fileReader.readAsArrayBuffer(file);
+            // 重新绑定选择按钮
+            document.getElementById('selectFileBtn').addEventListener('click', () => fileInput.click());
         }
         
         // 加载PDF
@@ -1203,72 +1331,76 @@
         }
         
         /**
-         * 自动识别 Canvas 四周的空白像素并裁切，返回一个新的 Canvas
+         * 自动识别 Canvas 四周的空白像素并裁切，同时在四周增加固定的留白 padding。
          * @param {HTMLCanvasElement} canvas 原始 Canvas
-         * @returns {HTMLCanvasElement} 裁切后的 Canvas
+         * @returns {HTMLCanvasElement} 裁切并增加留白后的 Canvas
          */
         function trimCanvas(canvas) {
-            const ctx = canvas.getContext('2d');
+            const ctx = canvas.getContext('2d', { willReadFrequently: true }); // 添加 willReadFrequently 优化性能
             const width = canvas.width;
             const height = canvas.height;
             
+            // 定义留白大小 (像素)。你可以根据需要调整这个值，比如 20, 30, 50 等。
+            // 这个值会加在上下左右四个方向。
+            const PADDING = 30; 
+
             // 获取所有像素数据
             const imageData = ctx.getImageData(0, 0, width, height);
             const data = imageData.data;
             
             let top = height, bottom = 0, left = width, right = 0;
+            let foundAnyContent = false;
             
-            // 寻找内容边界
+            // 寻找内容边界 (核心逻辑保持不变)
             for (let y = 0; y < height; y++) {
                 for (let x = 0; x < width; x++) {
-                    // 获取像素在 data 数组中的起始索引 (RGBA, 4个值)
                     const i = (y * width + x) * 4;
                     
-                    // 检查 Alpha (透明度) 通道 (data[i+3]) 或 RGB 值
-                    // 如果 Alpha > 0 (非透明)，且 RGB 值不接近白色 (例如 R, G, B 中至少一个小于 250)
-                    // 裁切的容忍度设置可以根据需要调整。这里使用一个简单的非纯白/非透明检查。
-                    
                     // 检查：如果像素是非完全透明 AND 包含非白色内容
+                    // 这里稍微放宽了白色的判定标准 (小于 250 视作有内容)，以兼容一些偏灰的扫描件背景
                     if (data[i + 3] > 0 && (data[i] < 250 || data[i+1] < 250 || data[i+2] < 250)) {
-                        
-                        // 更新边界
                         if (x < left) left = x;
                         if (x > right) right = x;
                         if (y < top) top = y;
                         if (y > bottom) bottom = y;
+                        foundAnyContent = true;
                     }
                 }
             }
             
-            // 如果没有找到非空白内容 (例如PDF是纯白页)，则返回原始 Canvas 或空 Canvas
-            if (top > bottom || left > right) {
-                // 如果是纯白页，返回一个极小的 Canvas
+            // 如果没有找到任何内容 (例如纯白页)，返回一个极小的白色 Canvas
+            if (!foundAnyContent) {
                 const emptyCanvas = document.createElement('canvas');
-                emptyCanvas.width = 1;
-                emptyCanvas.height = 1;
+                emptyCanvas.width = 100;
+                emptyCanvas.height = 100;
+                const eCtx = emptyCanvas.getContext('2d');
+                eCtx.fillStyle = '#ffffff';
+                eCtx.fillRect(0,0,100,100);
                 return emptyCanvas;
             }
             
-            // 增加一点点安全边距，防止内容被切掉
-            const padding = 2; 
-            top = Math.max(0, top - padding);
-            bottom = Math.min(height - 1, bottom + padding);
-            left = Math.max(0, left - padding);
-            right = Math.min(width - 1, right + padding);
+            // 计算实际内容的宽度和高度
+            const contentWidth = right - left + 1;
+            const contentHeight = bottom - top + 1;
             
             // 创建新的裁切 Canvas
-            const trimmedWidth = right - left + 1;
-            const trimmedHeight = bottom - top + 1;
-            
+            // 新的宽度和高度 = 内容宽高 + 双倍的 Padding (左右各一个，上下各一个)
             const trimmedCanvas = document.createElement('canvas');
-            trimmedCanvas.width = trimmedWidth;
-            trimmedCanvas.height = trimmedHeight;
+            trimmedCanvas.width = contentWidth + (PADDING * 2);
+            trimmedCanvas.height = contentHeight + (PADDING * 2);
+            const tCtx = trimmedCanvas.getContext('2d');
+
+            // 1. 重要：先用纯白色填充新画布作为背景
+            // 这样可以确保增加的 padding 区域是白色的，而不是透明的
+            tCtx.fillStyle = '#ffffff';
+            tCtx.fillRect(0, 0, trimmedCanvas.width, trimmedCanvas.height);
             
-            // 将原始 Canvas 的裁切区域绘制到新 Canvas 上
-            trimmedCanvas.getContext('2d').drawImage(
+            // 2. 将原始 Canvas 的内容区域绘制到新 Canvas 的中心位置
+            // 目标位置的 x 和 y 坐标偏移量就是 PADDING 的值
+            tCtx.drawImage(
                 canvas, 
-                left, top, trimmedWidth, trimmedHeight, // 源矩形 (裁剪区域)
-                0, 0, trimmedWidth, trimmedHeight      // 目标矩形 (新 Canvas 的全部区域)
+                left, top, contentWidth, contentHeight, // 源矩形 (紧凑的内容区域)
+                PADDING, PADDING, contentWidth, contentHeight // 目标矩形 (偏移了 PADDING 的位置)
             );
             
             return trimmedCanvas;
@@ -1370,9 +1502,14 @@
         }
 
         // 重置转换器
+        // 修改 resetConverter 函数
         function resetConverter() {
-            pdfFileInput.value = '';
+            fileInput.value = '';
             currentPdf = null;
+            selectedFiles = []; // 清空文件列表
+            processMode = 'pdf'; // 重置模式
+            
+            // ... 下面保持不变 ...
             convertedImages = [];
             splitImages = [];
             imagesContainer.innerHTML = '';
@@ -1386,15 +1523,13 @@
             currentSplitSpan.textContent = '0';
             
             uploadArea.innerHTML = `
-                <div class="upload-icon">📄</div>
-                <h3>选择或拖放PDF文件</h3>
-                <p>支持最大50MB的PDF文件</p>
-                <button class="btn" id="selectFileBtn">选择PDF文件</button>
+                <div class="upload-icon">📄/🖼️</div>
+                <h3>选择 PDF 文件 或 多张图片</h3>
+                <p>支持 PDF、JPG、PNG、WebP (可批量选择)</p>
+                <button class="btn" id="selectFileBtn">选择文件</button>
             `;
             
-            // 重新绑定事件
-            document.getElementById('selectFileBtn').addEventListener('click', () => pdfFileInput.click());
-            
+            document.getElementById('selectFileBtn').addEventListener('click', () => fileInput.click());
             showStatus('', '');
         }
         
