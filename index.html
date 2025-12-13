@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PDF转图片工具</title>
+    <title>PDF转图片工具 - 移动端优化版</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <style>
@@ -439,7 +439,25 @@
                 <div class="option-group">
                     <label for="scale">缩放比例:</label>
                     <input type="range" id="scale" min="0.5" max="3" step="0.1" value="3">
-                    <span id="scaleValue">300%</span>
+                    <span id="scaleValue">100%</span>
+                </div>
+
+                <div class="option-group" style="background: #e3f2fd;">
+                    <label for="sharpenAmount">🔎 锐化清晰:</label>
+                    <input type="range" id="sharpenAmount" min="0" max="3" step="0.1" value="0">
+                    <span id="sharpenValue">0</span>
+                </div>
+                
+                <div class="option-group" style="background: #fff3e0;">
+                    <label for="darkenAmount">✒️ 文字加深:</label>
+                    <input type="range" id="darkenAmount" min="0" max="150" step="5" value="0">
+                    <span id="darkenValue">0</span>
+                </div>
+
+                <div class="option-group" style="background: #f1f8e9;">
+                    <label for="cleanAmount">🧹 背景净化:</label>
+                    <input type="range" id="cleanAmount" min="150" max="250" step="1" value="200">
+                    <span id="cleanValue">200</span>
                 </div>
             </div>
             
@@ -487,7 +505,7 @@
     </div>
     
     <footer>
-        <p>© 2023 PDF转图片工具 - Author: srg</p>
+        <p>© 2023 PDF转图片工具 - author: srg</p>
     </footer>
 
     <script>
@@ -518,6 +536,12 @@
         const currentSplitSpan = document.getElementById('currentSplit');
         const totalSplitsSpan = document.getElementById('totalSplits');
         const mergePdfBtn = document.getElementById('mergePdfBtn');
+        const sharpenSlider = document.getElementById('sharpenAmount');
+        const sharpenValueSpan = document.getElementById('sharpenValue');
+        const darkenSlider = document.getElementById('darkenAmount');
+        const darkenValueSpan = document.getElementById('darkenValue');
+        const cleanSlider = document.getElementById('cleanAmount');
+        const cleanValueSpan = document.getElementById('cleanValue');
         
         let currentPdf = null;
         let convertedImages = [];
@@ -541,7 +565,9 @@
         prevSplitBtn.addEventListener('click', showPrevSplit);
         nextSplitBtn.addEventListener('click', showNextSplit);
         mergePdfBtn.addEventListener('click', mergeImagesToPdf);
-        
+        sharpenSlider.addEventListener('input', () => sharpenValueSpan.textContent = sharpenSlider.value);
+        darkenSlider.addEventListener('input', () => darkenValueSpan.textContent = darkenSlider.value);
+        cleanSlider.addEventListener('input', () => cleanValueSpan.textContent = cleanSlider.value);
         // 拖放功能
         uploadArea.addEventListener('dragover', (e) => {
             e.preventDefault();
@@ -629,6 +655,78 @@
             });
         }
         
+        /**
+         * 图像增强处理函数 (锐化 + 背景净化 + 文字加深)
+         * @param {CanvasRenderingContext2D} ctx
+         * @param {number} width
+         * @param {number} height
+         * @param {number} sharpenAmount - 锐化强度 (0-3)
+         * @param {number} darkenAmount - 加深强度 (0-150)
+         * @param {number} cleanThreshold - 背景净化阈值 (150-255，高于此亮度的变为纯白)
+         */
+        function applyImageEnhancement(ctx, width, height, sharpenAmount, darkenAmount, cleanThreshold) {
+            // 如果没有任何增强参数，直接返回
+            if (sharpenAmount <= 0 && darkenAmount <= 0 && cleanThreshold >= 254) return;
+
+            const imgData = ctx.getImageData(0, 0, width, height);
+            const data = imgData.data;
+            
+            // 创建副本用于锐化计算
+            const copyData = sharpenAmount > 0 ? new Uint8ClampedArray(data) : null;
+
+            for (let y = 0; y < height; y++) {
+                for (let x = 0; x < width; x++) {
+                    const idx = (y * width + x) * 4;
+
+                    let r = data[idx];
+                    let g = data[idx + 1];
+                    let b = data[idx + 2];
+
+                    // === 1. 锐化 (保持不变) ===
+                    if (sharpenAmount > 0 && copyData && x > 0 && y > 0 && x < width - 1 && y < height - 1) {
+                        const up = ((y - 1) * width + x) * 4;
+                        const down = ((y + 1) * width + x) * 4;
+                        const left = (y * width + (x - 1)) * 4;
+                        const right = (y * width + (x + 1)) * 4;
+
+                        const rAround = (copyData[up] + copyData[down] + copyData[left] + copyData[right]) / 4;
+                        const gAround = (copyData[up+1] + copyData[down+1] + copyData[left+1] + copyData[right+1]) / 4;
+                        const bAround = (copyData[up+2] + copyData[down+2] + copyData[left+2] + copyData[right+2]) / 4;
+
+                        r = r + (r - rAround) * sharpenAmount;
+                        g = g + (g - gAround) * sharpenAmount;
+                        b = b + (b - bAround) * sharpenAmount;
+                    }
+
+                    // 计算亮度 (用于后续判断)
+                    const brightness = (r + g + b) / 3;
+
+                    // === 2. 背景净化 (关键改进) ===
+                    // 如果亮度高于设定的阈值 (cleanThreshold)，说明它是浅灰色背景或阴影
+                    // 直接强制变为纯白 (255)，从而“去除”阴影
+                    if (brightness > cleanThreshold) {
+                        r = 255;
+                        g = 255;
+                        b = 255;
+                    } 
+                    // === 3. 文字加深 ===
+                    // 只有当它没被当作背景清除掉 (即 brightness <= cleanThreshold) 时，才加深
+                    else if (darkenAmount > 0) {
+                        // 线性减淡：直接减去数值，让深色更深
+                        r = r - darkenAmount;
+                        g = g - darkenAmount;
+                        b = b - darkenAmount;
+                    }
+
+                    data[idx]     = r;
+                    data[idx + 1] = g;
+                    data[idx + 2] = b;
+                }
+            }
+
+            ctx.putImageData(imgData, 0, 0);
+        }
+
         // 转换PDF为图片
         function convertPdfToImages() {
             if (!currentPdf) {
@@ -674,8 +772,20 @@
                     };
                     
                     page.render(renderContext).promise.then(() => {
-                        
                         const trimmedCanvas = trimCanvas(canvas);
+
+                        const sAmount = parseFloat(sharpenSlider.value) || 0;
+                        const dAmount = parseFloat(darkenSlider.value) || 0;
+                        const cThreshold = parseFloat(cleanSlider.value);
+                        const tCtx = trimmedCanvas.getContext('2d');
+                        applyImageEnhancement(
+                            tCtx, 
+                            trimmedCanvas.width, 
+                            trimmedCanvas.height, 
+                            sAmount, 
+                            dAmount,
+                            cThreshold // 传入新参数
+                        );
                         
                         // 使用裁切后的 Canvas 转换为图片
                         const imageDataUrl = trimmedCanvas.toDataURL(`image/${format}`, quality);
