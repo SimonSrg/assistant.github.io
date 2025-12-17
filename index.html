@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -582,16 +583,22 @@
         });
         
         uploadArea.addEventListener('drop', (e) => {
-            e.preventDefault();
             uploadArea.style.backgroundColor = '';
             
             if (e.dataTransfer.files.length > 0) {
                 const file = e.dataTransfer.files[0];
                 if (file.type === 'application/pdf') {
-                    pdfFileInput.files = e.dataTransfer.files;
+                    // 修正变量名：pdfFileInput -> fileInput
+                    fileInput.files = e.dataTransfer.files; 
                     handleFileSelect();
                 } else {
-                    showStatus('请选择PDF文件', 'error');
+                    // 这里为了支持拖拽图片，可以稍微放宽逻辑
+                    if (file.type.startsWith('image/')) {
+                        fileInput.files = e.dataTransfer.files; 
+                        handleFileSelect();
+                    } else {
+                        showStatus('请选择PDF或图片文件', 'error');
+                    }
                 }
             }
         });
@@ -777,6 +784,8 @@
             pdfjsLib.getDocument(data).promise.then(pdf => {
                 currentPdf = pdf;
                 showStatus(`PDF加载成功，共 ${pdf.numPages} 页`, 'success');
+                convertBtn.disabled = false;
+                resetBtn.disabled = false;
             }).catch(error => {
                 console.error('Error loading PDF:', error);
                 showStatus('加载PDF失败，请检查文件是否正确', 'error');
