@@ -717,7 +717,9 @@
                     doc.addImage(part.dataUrl, format, x, y, tW, tH, null, 'FAST');
                 }
             }
-            doc.save(`Split_Merge_${Date.now()}.pdf`);
+            const now = new Date();
+            const fileName = `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`;
+            doc.save(`Merged-${fileName}.pdf`);
             showStatus(`PDF合并完成!`, 'success');
         }
 
